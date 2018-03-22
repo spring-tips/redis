@@ -39,7 +39,6 @@ import org.springframework.web.bind.annotation.SessionAttributes;
 
 import java.io.Serializable;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 
@@ -206,18 +205,7 @@ class ShoppingCart implements Serializable {
 
 @Service
 class OrderService {
-
-	private final Map<Long, Order> orders = new ConcurrentHashMap<>();
-
-	OrderService() {
-		Long id = 0L;
-		List<Order> orderList = Arrays.asList(
-				new Order(++id, new Date(), Collections.emptyList()),
-				new Order(++id, new Date(), Collections.emptyList()),
-				new Order(++id, new Date(), Collections.emptyList()));
-		orderList.forEach(o -> this.orders.put(o.getId(), o));
-	}
-
+	
 	@Cacheable("order")
 	public Order byId(Long id) {
 		try {
@@ -225,7 +213,7 @@ class OrderService {
 		} catch (InterruptedException e) {
 			throw new RuntimeException(e);
 		}
-		return this.orders.get(id);
+		return new Order(id, new Date(), Collections.emptyList());
 	}
 }
 
