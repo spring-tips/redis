@@ -29,7 +29,6 @@ import org.springframework.data.redis.listener.PatternTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.data.repository.CrudRepository;
 import org.springframework.session.data.redis.config.annotation.web.http.EnableRedisHttpSession;
-import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Controller;
 import org.springframework.stereotype.Service;
 import org.springframework.ui.Model;
@@ -37,7 +36,6 @@ import org.springframework.util.Assert;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.SessionAttributes;
-import org.springframework.web.context.annotation.SessionScope;
 
 import java.io.Serializable;
 import java.util.*;
@@ -171,54 +169,22 @@ public class RedisApplication {
 		SpringApplication.run(RedisApplication.class, args);
 	}
 }
-/*
+
 @Log
 @Controller
-class ShoppingCartController {
-
-	private final AtomicLong id = new AtomicLong();
-	private final ShoppingCart shoppingCart;
-
-	ShoppingCartController(ShoppingCart shoppingCart) {
-		this.shoppingCart = shoppingCart;
-	}
-
-	@PostMapping("/order")
-	String add(Model model) {
-		Order order = new Order(this.id.incrementAndGet(), new Date(), Collections.emptyList());
-		shoppingCart.addOrder(order);
- 		return this.orders(model);
-	}
-
-	@GetMapping("/orders")
-	String get(Model model) {
-		return this.orders(model);
-	}
-
-	private String orders(Model model) {
-		model.addAttribute("orders", this.shoppingCart.getOrders());
- 		return "orders";
-	}
-}*/
-
-@Controller
-@SessionAttributes(SessionServlet.CART_ATTRIBUTE)
-@Log
+@SessionAttributes("cart")
 class SessionServlet {
 
-
-	final static String CART_ATTRIBUTE = "cart";
-
 	private final AtomicLong id = new AtomicLong();
 
-	@ModelAttribute(CART_ATTRIBUTE)
+	@ModelAttribute("cart")
 	ShoppingCart cart() {
 		log.info("cart being created");
 		return new ShoppingCart();
 	}
 
 	@GetMapping("/orders")
-	String orders(@ModelAttribute(CART_ATTRIBUTE) ShoppingCart cart, Model model) {
+	String orders(@ModelAttribute("cart") ShoppingCart cart, Model model) {
 		cart.addOrder(new Order(id.incrementAndGet(), new Date(), Collections.emptyList()));
 		model.addAttribute("orders", cart.getOrders());
 		return "orders";
