@@ -1,0 +1,4 @@
+applications:
+- name: st-redis
+  services:
+  - st-redis
