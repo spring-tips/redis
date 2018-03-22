@@ -15,6 +15,7 @@
 - pub/sub
 - and its cleanly integrted into the spring cache manager abstraction?
 - and it can handle external sessions? 
+- deploy to PWS
 - its also got a reactive variant, and that variant is the one u see in play w/ the spring cloud gateway. its in turn using atomic numbers.
 - next steps: pipelining (batching), the redis labs clustering and RDBMS, the spring cloudd stream binder, and so much more. 
 
