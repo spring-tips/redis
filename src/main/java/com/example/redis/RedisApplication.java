@@ -32,135 +32,121 @@ import org.springframework.session.data.redis.config.annotation.web.http.EnableR
 import org.springframework.stereotype.Controller;
 import org.springframework.stereotype.Service;
 import org.springframework.ui.Model;
-import org.springframework.util.Assert;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.SessionAttributes;
 
 import java.io.Serializable;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
-
-/**
- * Things to demo:
- * - redisTemplate and serialization
- * - keys and values
- * - repositories
- * - caching
- * - pub/sub
- * - sessions
- */
 @Log
-@EnableRedisHttpSession
 @EnableCaching
+@EnableRedisHttpSession
 @SpringBootApplication
 public class RedisApplication {
 
-	private final RedisConnectionFactory connectionFactory;
+	private final String topic = "chat";
 
-	public RedisApplication(RedisConnectionFactory connectionFactory) {
-		this.connectionFactory = connectionFactory;
-	}
-
-	private Long generateNextId() {
-		long tmpLong = new Random().nextLong();
-		return Math.max(tmpLong, tmpLong * -1);
-	}
-
-	private ApplicationRunner title(String title, ApplicationRunner runner) {
-		Assert.hasText(title, "there should be a title");
+	private ApplicationRunner titledRunner(String title, ApplicationRunner rr) {
 		return args -> {
 			log.info(title.toUpperCase() + ":");
-			runner.run(args);
+			rr.run(args);
 		};
 	}
 
 	@Bean
-	CacheManager cacheManager() {
+	CacheManager redisCache(RedisConnectionFactory cf) {
 		return RedisCacheManager
-				.builder(this.connectionFactory)
+				.builder(cf)
 				.build();
 	}
 
 	@Bean
-	RedisMessageListenerContainer redisListener() {
-		MessageListener messageListener = (msg, pattern) -> {
-			String str = new String(msg.getBody());
-			log.info("message from 'chat': " + str);
-		};
-		RedisMessageListenerContainer container = new RedisMessageListenerContainer();
-		container.setConnectionFactory(this.connectionFactory);
-		container.addMessageListener(messageListener, new PatternTopic("chat"));
-		return container;
-	}
-
-	@Bean
 	ApplicationRunner geography(RedisTemplate<String, String> rt) {
-		return title("Geography", args -> {
-			GeoOperations<String, String> opsForGeo = rt.opsForGeo();
+		return titledRunner("geography", args -> {
 
-			opsForGeo.add("Sicily", new Point(13.361389, 38.115556), "Arigento");
-			opsForGeo.add("Sicily", new Point(15.087269, 37.502669), "Catania");
-			opsForGeo.add("Sicily", new Point(13.583333, 37.316667), "Palermo");
+			GeoOperations<String, String> geo = rt.opsForGeo();
+			geo.add("Sicily", new Point(13.361389, 38.1155556), "Arigento");
+			geo.add("Sicily", new Point(15.087269, 37.502669), "Catania");
+			geo.add("Sicily", new Point(13.583333, 37.316667), "Palermo");
 
-			Circle circle = new Circle(new Point(13.583333, 37.316667), //
-					new Distance(100, RedisGeoCommands.DistanceUnit.KILOMETERS));
-			GeoResults<RedisGeoCommands.GeoLocation<String>> result = opsForGeo.radius("Sicily", circle);
-			log.info(result.toString());
-			result
+			Circle circle = new Circle(new Point(13.583333, 37.316667),
+					new Distance(100, org.springframework.data.redis.connection.RedisGeoCommands.DistanceUnit.KILOMETERS));
+
+			GeoResults<RedisGeoCommands.GeoLocation<String>> geoResults = geo.radius("Sicily", circle);
+			geoResults
 					.getContent()
-					.forEach(gr -> log.info(gr.toString()));
+					.forEach(c -> log.info(c.toString()));
 		});
 	}
 
 	@Bean
-	ApplicationRunner repositories(OrderRepository orderRepository, LineItemRepository lineItemRepository) {
-		return title("Hash Repositories", args -> {
+	ApplicationRunner pubSub(RedisTemplate<String, String> rt) {
+		return titledRunner("publish/subscribe", args -> {
+			rt.convertAndSend(topic, "Hello, world @ " + Instant.now().toString());
+		});
+	}
 
-			Long orderId = generateNextId();
+	@Bean
+	ApplicationRunner repositories(
+			OrderRepository orderRepository,
+			LineItemRepository lineItemRepository) {
 
-			List<LineItem> items = Arrays.asList(
-					new LineItem(orderId, generateNextId(), "plunger"),
-					new LineItem(orderId, generateNextId(), "soup"),
-					new LineItem(orderId, generateNextId(), "coffee mug"));
+		return titledRunner("repositories", args -> {
 
-			items
+			Long orderId = generateId();
+
+			List<LineItem> itemList = Arrays.asList(
+					new LineItem(orderId, generateId(), "plunger"),
+					new LineItem(orderId, generateId(), "soup"),
+					new LineItem(orderId, generateId(), "coffee mug"));
+			itemList
 					.stream()
 					.map(lineItemRepository::save)
-					.forEach(li -> log.info("saved " + li.toString()));
+					.forEach(li -> log.info(li.toString()));
 
-			lineItemRepository.findByOrderId(items.iterator().next().getOrderId())
-					.forEach(li -> log.info("found " + LineItem.class.getName() + ':' + li.getOrderId() + ':' + li.getId()));
-
-			Order order = new Order(generateNextId(), new Date(), items);
+			Order order = new Order(orderId, new Date(), itemList);
 			orderRepository.save(order);
 
-			Optional<Order> byId = orderRepository.findById(order.getId());
-			byId.ifPresent(o -> log.info("saved " + o.toString()));
+			Collection<Order> found = orderRepository.findByWhen(order.getWhen());
+			found.forEach(o -> log.info("found: " + o.toString()));
 		});
 	}
 
 	@Bean
-	ApplicationRunner publishSubscribe(RedisTemplate<String, String> rt) {
-		return title("Publish/Subscribe", args -> {
-			log.info("sending message to 'chat'");
-			rt.convertAndSend("chat", "Hello, world");
-		});
+	RedisMessageListenerContainer listener(RedisConnectionFactory cf) {
+		MessageListener ml = (message, pattern) -> {
+			String str = new String(message.getBody());
+			log.info("message from '" + topic + "': " + str);
+		};
+		RedisMessageListenerContainer mlc = new RedisMessageListenerContainer();
+		mlc.addMessageListener(ml, new PatternTopic(this.topic));
+		mlc.setConnectionFactory(cf);
+		return mlc;
 	}
 
-	private long measure(Runnable runnable) {
+	private Long generateId() {
+		long tmp = new Random().nextLong();
+		return Math.max(tmp, tmp * -1);
+	}
+
+
+	private long measure(Runnable r) {
 		long start = System.currentTimeMillis();
-		runnable.run();
-		return System.currentTimeMillis() - start;
+		r.run();
+		long stop = System.currentTimeMillis();
+		return stop - start;
 	}
 
 	@Bean
 	ApplicationRunner cache(OrderService orderService) {
-		return title("Caching", args -> {
-			log.info("first: " + measure(() -> orderService.byId(1L)));
-			log.info("second: " + measure(() -> orderService.byId(1L)));
-			log.info("third: " + measure(() -> orderService.byId(1L)));
+		return titledRunner("caching", a -> {
+			Runnable measure = () -> orderService.byId(1L);
+			log.info("first " + measure(measure));
+			log.info("two " + measure(measure));
+			log.info("three " + measure(measure));
 		});
 	}
 
@@ -169,26 +155,62 @@ public class RedisApplication {
 	}
 }
 
-@Log
-@Controller
-@SessionAttributes("cart")
-class SessionServlet {
+@Service
+class OrderService {
 
-	private final AtomicLong id = new AtomicLong();
-
-	@ModelAttribute("cart")
-	ShoppingCart cart() {
-		log.info("cart being created");
-		return new ShoppingCart();
-	}
-
-	@GetMapping("/orders")
-	String orders(@ModelAttribute("cart") ShoppingCart cart, Model model) {
-		cart.addOrder(new Order(id.incrementAndGet(), new Date(), Collections.emptyList()));
-		model.addAttribute("orders", cart.getOrders());
-		return "orders";
+	@Cacheable("order-by-id")
+	public Order byId(Long id) {
+		//@formatter:off
+		try {
+			Thread.sleep(1000 * 10);
+		}
+		catch (Throwable e) {
+			throw new RuntimeException(e);
+		}
+		//@formatter:on
+		return new Order(id, new Date(), Collections.emptyList());
 	}
 }
+
+interface OrderRepository extends CrudRepository<Order, Long> {
+	Collection<Order> findByWhen(Date d);
+}
+
+
+interface LineItemRepository extends CrudRepository<LineItem, Long> {
+}
+
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+@RedisHash("orders")
+class Order implements Serializable {
+
+	@Id
+	private Long id;
+
+	@Indexed
+	private Date when;
+
+	@Reference
+	private List<LineItem> lineItems;
+}
+
+@RedisHash("lineItems")
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+class LineItem implements Serializable {
+
+	@Indexed
+	private Long orderId;
+
+	@Id
+	private Long id;
+
+	private String description;
+}
+
 
 class ShoppingCart implements Serializable {
 
@@ -199,63 +221,29 @@ class ShoppingCart implements Serializable {
 	}
 
 	public Collection<Order> getOrders() {
-		return orders;
+		return this.orders;
 	}
 }
 
-@Service
-class OrderService {
-	
-	@Cacheable("order")
-	public Order byId(Long id) {
-		try {
-			Thread.sleep(1000 * 10);
-		} catch (InterruptedException e) {
-			throw new RuntimeException(e);
-		}
-		return new Order(id, new Date(), Collections.emptyList());
+
+@Log
+@Controller
+@SessionAttributes("cart")
+class CartSessionController {
+
+	private final AtomicLong ids = new AtomicLong();
+
+	@ModelAttribute("cart")
+	ShoppingCart cart() {
+		log.info("creating new cart");
+		return new ShoppingCart();
 	}
-}
 
-interface LineItemRepository extends CrudRepository<LineItem, Long> {
-
-	Collection<LineItem> findByOrderId(Long id);
-}
-
-interface OrderRepository extends CrudRepository<Order, Long> {
-
-	Collection<Order> findByDate(Date date);
-}
-
-@RedisHash
-@Data
-@AllArgsConstructor
-@NoArgsConstructor
-class Order implements Serializable {
-
-	@Id
-	private Long id;
-
-	@Indexed
-	private Date date;
-
-	@Reference
-	private List<LineItem> lineItems;
-
-}
-
-@RedisHash
-@Data
-@AllArgsConstructor
-@NoArgsConstructor
-class LineItem implements Serializable {
-
-	// look up this object by its orderId
-	@Indexed
-	private Long orderId;
-
-	@Id
-	private Long id;
-
-	private String description;
+	@GetMapping("/orders")
+	String orders(@ModelAttribute("cart") ShoppingCart cart,
+	              Model model) {
+		cart.addOrder(new Order(ids.incrementAndGet(), new Date(), Collections.emptyList()));
+		model.addAttribute("orders", cart.getOrders());
+		return "orders";
+	}
 }
